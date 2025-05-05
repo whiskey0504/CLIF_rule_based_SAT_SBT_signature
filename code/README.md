@@ -1,46 +1,21 @@
- ## Code directory
-
-Update this README with the specific project workflow instructions.
-This directory contains scripts for the project workflow. The general workflow consists of three main steps: cohort identification, quality control, and analysis. Scripts can be implemented in R or Python, depending on project requirements. Please note that this workflow is just a suggestion, and you may change the structure to suit your project needs.
-
 ### General Workflow
 
-1. Run the cohort_identification script
-   This script should:
-   - Apply inclusion and exclusion criteria
-   - Select required fields from each table
-   - Filter tables to include only required observations
+Before start running code you will need to create a python evn to run the code.
+Example for Python:
 
-   Expected outputs:
-   - cohort_ids: a list of unique identifiers for the study cohort
-   - cohort_data: the filtered study cohort data
-   - cohort_summary: a summary table describing the study cohort
+```
+if Mac/Linux:
+python3 -m venv .satsbt
+source .satsbt/bin/activate
+pip install -r requirements.txt
 
-   Examples of cohort identification scripts:
-   - [`code/templates/Python/01_cohort_identification_template.py`](templates/Python/01_cohort_identification_template.py)
-   - [`code/templates/R/01_cohort_identification_template.R`](templates/R/01_cohort_identification_template.R)
+if Windows:
+python -m venv .satsbt_ATS24
+call .satsbt_ATS24\Scripts\activate.bat
+pip install -r requirements.txt
+```
 
-2. Run the quality_control script
-   This script should:
-   - Perform project-specific quality control checks on the filtered cohort data
-   - Handle outliers using predefined thresholds as given in `outlier-thresholds` directory. 
-   - Clean and preprocess the data for analysis
-
-   Script: [`code/templates/R/02_project_quality_checks_template.R`](templates/R/02_project_quality_checks_template.R) & [`code/templates/R/03_outlier_handling_template.R`](templates/R/03_outlier_handling_template.R) 
-
-   Input: cohort_data 
-
-   Output: cleaned_cohort_data 
-
-3. Run the analysis script(s)
-   This script (or set of scripts) should contain the main analysis code for the project.
-   It may be broken down into multiple scripts if necessary.
-   
-   Script: [`code/templates/R/04_project_analysis_template.R`](templates/R/04_project_analysis_template.R) 
-
-   Input: cleaned_cohort_data 
-
-   Output: [List of expected result files, e.g., statistical_results, figures, tables saved in the [`output/final`](../output/README.md) directory] 
-
-
-
+- Open and run the following notebooks **you can run 01 & 02 notebooks parallelly**:
+  1. `00_*.ipynb`
+  2. `01_*.ipynb`
+  3. `02_*.ipynb`
