@@ -27,5 +27,6 @@ CLIF_*.fst
 temp.ipynb
 .SBT
 *.png
+*.parquet
 
 code/backupcode
