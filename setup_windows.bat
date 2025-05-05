@@ -36,8 +36,6 @@ python -m ipykernel install --user --name=.SBT --display-name="Python (SBT 2025)
 
 echo %YELLOW%==================================================%RESET%
 echo %GREEN%Env setup completed.%RESET%
-pause
-
 
 echo %YELLOW%==================================================%RESET%
 echo %GREEN%IMPORTANT: Please run the notebook named 00_* first to generate the cohort.%RESET%
