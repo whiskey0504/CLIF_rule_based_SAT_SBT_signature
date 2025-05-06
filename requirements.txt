@@ -9,3 +9,5 @@ pytz
 duckdb
 jupyter
 ipykernel
+pyArrow
+fastparquet
