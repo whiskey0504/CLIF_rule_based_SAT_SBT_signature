@@ -402,7 +402,6 @@ def convert_datetime_columns_to_site_tz(df, site_tz_str, verbose=True):
     return df
 
 
-
 def process_resp_support_waterfall(
     resp_support: pd.DataFrame,
     *,
@@ -417,7 +416,7 @@ def process_resp_support_waterfall(
     ----------
     resp_support : pd.DataFrame
         Raw `clif_respiratory_support` table **already in UTC**.
-        All datetime columns must be timezone-aware.
+        All datetime columns must be timezone-aware as UTC.
     id_col : str, default ``"hospitalization_id"``
         Encounter-level identifier.
     verbose : bool, default ``True``
@@ -473,6 +472,18 @@ def process_resp_support_waterfall(
     num_cols = [c for c in num_cols if c in rs.columns]
     rs[num_cols] = rs[num_cols].apply(pd.to_numeric, errors="coerce")
 
+    rs['fio2_set'] = pd.to_numeric(rs['fio2_set'], errors='coerce')
+    # (Optional) If FiO2 is >1 on average => scale by /100
+    fio2_mean = rs['fio2_set'].mean(skipna=True)
+    # If the mean is greater than 1, divide 'fio2_set' by 100
+    if fio2_mean and fio2_mean > 1.0:
+        # Only divide values greater than 1 to avoid re-dividing already correct values
+        rs.loc[rs['fio2_set'] > 1, 'fio2_set'] = \
+            rs.loc[rs['fio2_set'] > 1, 'fio2_set'] / 100
+        print("Updated fio2_set to be between 0.21 and 1")
+    else:
+        print("FIO2_SET mean=", fio2_mean, "is within the required range")
+
     # Helpers
     rs["recorded_date"] = rs["recorded_dttm"].dt.date
     rs["recorded_hour"] = rs["recorded_dttm"].dt.hour
@@ -487,7 +498,7 @@ def process_resp_support_waterfall(
         min_max.apply(
             lambda r: pd.date_range(
                 r["min"].floor("h"),
-                r["max"].ceil("h"),
+                r["max"].floor("h"),
                 freq="1h",
                 tz="UTC",
             ),
@@ -506,10 +517,10 @@ def process_resp_support_waterfall(
     )
     scaffold["recorded_date"] = scaffold["recorded_dttm"].dt.date
     scaffold["recorded_hour"] = scaffold["recorded_dttm"].dt.hour
-
-    rs = pd.concat([rs, scaffold], ignore_index=True).sort_values(
-        [id_col, "recorded_dttm", "recorded_date", "recorded_hour"]
-    )
+    scaffold["is_scaffold"] = True
+    # rs = pd.concat([rs, scaffold], ignore_index=True).sort_values(
+    #     [id_col, "recorded_dttm", "recorded_date", "recorded_hour"]
+    # )
 
     # ------------------------------------------------------------------ #
     # Phase 1 – heuristics to infer / clean device & mode                #
@@ -546,7 +557,7 @@ def process_resp_support_waterfall(
         rs["device_category"].isna()
         & rs["device_name"].isna()
         & rs["mode_category"].str.contains(
-            r"(assist control-volume control|simv|pressure control)", na=False
+            r"(?:assist control-volume control|simv|pressure control)", na=False
         )
     )
     rs.loc[mask, ["device_category", "device_name"]] = ["imv", most_common_imv_name]
@@ -583,18 +594,23 @@ def process_resp_support_waterfall(
     rs.loc[nippv_like, "device_category"] = "nippv"
     rs.loc[nippv_like & rs["device_name"].isna(), "device_name"] = most_common_nippv_name
 
-    # 1-d  clearly CMV again
-    back_to_cmv = (
+    # 1-d  clearly IMV again
+    prev_cat = rs.groupby(id_col)["device_category"].shift()
+    next_cat = rs.groupby(id_col)["device_category"].shift(-1)
+
+    back_to_imv = (
         rs["device_category"].isna()
         & ~rs["device_name"].str.contains("trach", na=False)
+        & ((prev_cat == "imv") | (next_cat == "imv"))
         & rs["tidal_volume_set"].gt(0)
         & rs["resp_rate_set"].gt(0)
     )
-    rs.loc[back_to_cmv, ["device_category", "device_name"]] = [
+    rs.loc[back_to_imv, ["device_category", "device_name"]] = [
         "imv",
         most_common_imv_name,
     ]
-    fill_mode_mask = back_to_cmv & rs["mode_category"].isna()
+
+    fill_mode_mask = back_to_imv & rs["mode_category"].isna()
     rs.loc[
         fill_mode_mask, ["mode_category", "mode_name"]
     ] = ["assist control-volume control", most_common_cmv_name]
@@ -642,6 +658,11 @@ def process_resp_support_waterfall(
     # unique per timestamp
     rs = rs.drop_duplicates(subset=[id_col, "recorded_dttm"], keep="first")
 
+    rs["is_scaffold"] = False 
+    rs = pd.concat([rs, scaffold], ignore_index=True).sort_values(
+        [id_col, "recorded_dttm", "recorded_date", "recorded_hour"]
+    )
+
     # ------------------------------------------------------------------ #
     # Phase 2 – hierarchical IDs                                         #
     # ------------------------------------------------------------------ #
@@ -663,7 +684,7 @@ def process_resp_support_waterfall(
     rs["device_name"] = (
         rs.sort_values("recorded_dttm")
         .groupby([id_col, "device_cat_id"])["device_name"]
-        .transform(lambda s: s.ffill().bfill())
+        .transform(lambda s: s.ffill().bfill()).infer_objects(copy=False)
     )
     rs["device_id"] = change_id(rs["device_name"], rs[id_col])
 
@@ -671,7 +692,7 @@ def process_resp_support_waterfall(
     rs = rs.sort_values([id_col, "recorded_dttm"])
     rs["mode_category"] = (
         rs.groupby([id_col, "device_id"])["mode_category"]
-        .transform(lambda s: s.ffill().bfill())
+        .transform(lambda s: s.ffill().bfill()).infer_objects(copy=False)
     )
     dev_curr = rs["device_id"]
     dev_prev = rs.groupby(id_col)["device_id"].shift()
@@ -683,7 +704,7 @@ def process_resp_support_waterfall(
     # 2-D  mode_name_id
     rs["mode_name"] = (
         rs.groupby([id_col, "mode_cat_id"])["mode_name"]
-        .transform(lambda s: s.ffill().bfill())
+        .transform(lambda s: s.ffill().bfill()).infer_objects(copy=False)
     )
     cat_curr = rs["mode_cat_id"]
     cat_prev = rs.groupby(id_col)["mode_cat_id"].shift()
@@ -732,14 +753,20 @@ def process_resp_support_waterfall(
             breaker = (g["device_category"] == "trach collar").cumsum()
             return (
                 g.groupby(breaker)[num_cols_fill]
-                .apply(lambda x: x.ffill().bfill())
+                .apply(lambda x: x.ffill().bfill()).infer_objects(copy=False)
+                # .apply(lambda x: x.ffill()).infer_objects(copy=False)
             )
         return g[num_cols_fill].ffill().bfill()
+        # return g[num_cols_fill].ffill()
 
     rs[num_cols_fill] = (
         rs.groupby([id_col, "mode_name_id"], group_keys=False, sort=False)
         .apply(fill_block)
     )
+
+    # “t-piece” rows with blank mode_category → classify as blow-by
+    tpiece_mask = rs['mode_category'].isna() & rs['device_name'].str.contains('t-piece', na=False)
+    rs.loc[tpiece_mask, 'mode_category'] = 'blow by'
 
     # Tracheostomy forward-fill only
     rs["tracheostomy"] = rs.groupby(id_col)["tracheostomy"].ffill()
@@ -753,6 +780,20 @@ def process_resp_support_waterfall(
         .sort_values([id_col, "recorded_dttm"])
         .reset_index(drop=True)
     )
+    # rs = rs[~rs["is_scaffold"]] 
+    # rs = rs.drop(columns="is_scaffold")
+
+    # Final columns to drop
+    drop_cols = [
+        "recorded_date",
+        "recorded_hour"
+        # "device_cat_id",
+        # "device_id",
+        # "mode_cat_id",
+        # "mode_name_id",
+    ]
+    drop_cols = [c for c in drop_cols if c in rs.columns]
+    rs = rs.drop(columns=drop_cols)
 
     p("✅ Respiratory-support waterfall complete.")
     return rs
